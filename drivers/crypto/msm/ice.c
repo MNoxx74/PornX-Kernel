@@ -3,6 +3,7 @@
  * QTI Inline Crypto Engine (ICE) driver
  *
  * Copyright (c) 2014-2020, The Linux Foundation. All rights reserved.
+ * Copyright (C) 2020 XiaoMi, Inc.
  */
 
 #include <linux/module.h>
