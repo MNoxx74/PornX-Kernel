@@ -1,6 +1,5 @@
 /*
  * Copyright (c) 2018-2020 The Linux Foundation. All rights reserved.
- * Copyright (C) 2020 XiaoMi, Inc.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -273,12 +272,7 @@ static void __hdd_nud_failure_work(void *data)
 		return;
 	}
 
-    /*Modify remove the disconnect logic in driver when NUD_FAILED happen for HQ83646 by HQ-101010514 begin*/
-	hdd_debug("Do not disconnect after NUD Failure.");
-	return;
-    /*Modify remove the disconnect logic in driver when NUD_FAILED happen for HQ83646 by HQ-101010514 end*/
-
-    qdf_mutex_acquire(&adapter->disconnection_status_lock);
+	qdf_mutex_acquire(&adapter->disconnection_status_lock);
 	if (adapter->disconnection_in_progress) {
 		qdf_mutex_release(&adapter->disconnection_status_lock);
 		hdd_debug("Disconnect is already in progress");
@@ -354,17 +348,10 @@ static void hdd_nud_process_failure_event(struct hdd_adapter *adapter)
 		hdd_nud_capture_stats(adapter, NUD_FAILED);
 		if (hdd_nud_honour_failure(adapter)) {
 			adapter->nud_tracking.curr_state = NUD_FAILED;
-			/*Modify remove the disconnect logic in driver when NUD_FAILED happen for HQ83646 by HQ-101010514 begin*/
-			//qdf_sched_work(0, &adapter
-					//->nud_tracking.nud_event_work);
-            /*Modify remove the disconnect logic in driver when NUD_FAILED happen for HQ83646 by HQ-101010514 end*/
+			qdf_sched_work(0, &adapter
+					->nud_tracking.nud_event_work);
 		} else {
-            /*Modify remove the disconnect logic in driver when NUD_FAILED happen for HQ83646 by HQ-101010514 begin*/
-			//hdd_nud_set_tracking(adapter, NUD_NONE, false);
-			hdd_debug("NUD_START [0x%x]", NUD_INCOMPLETE);
-			hdd_nud_capture_stats(adapter, NUD_INCOMPLETE);
-			hdd_nud_set_tracking(adapter, NUD_INCOMPLETE, true);
-			/*Modify remove the disconnect logic in driver when NUD_FAILED happen for HQ83646 by HQ-101010514 end*/
+			hdd_nud_set_tracking(adapter, NUD_NONE, false);
 		}
 	} else {
 		hdd_debug("NUD FAILED -> Current State [0x%x]", curr_state);
