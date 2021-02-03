@@ -568,6 +568,11 @@ add_dentry:
 
 	if (inode) {
 		f2fs_i_pino_write(inode, dir->i_ino);
+
+		/* synchronize inode page's data from inode cache */
+		if (is_inode_flag_set(inode, FI_NEW_INODE))
+			f2fs_update_inode(inode, page);
+
 		f2fs_put_page(page, 1);
 	}
 
@@ -781,8 +786,6 @@ int f2fs_fill_dentries(struct dir_context *ctx, struct f2fs_dentry_ptr *d,
 	struct f2fs_dir_entry *de = NULL;
 	struct fscrypt_str de_name = FSTR_INIT(NULL, 0);
 	struct f2fs_sb_info *sbi = F2FS_I_SB(d->inode);
-	struct blk_plug plug;
-	bool readdir_ra = sbi->readdir_ra == 1;
 	int err = 0;
 
 	bit_pos = ((unsigned long)ctx->pos % d->max);
@@ -815,14 +818,15 @@ int f2fs_fill_dentries(struct dir_context *ctx, struct f2fs_dentry_ptr *d,
 		bit_pos += GET_DENTRY_SLOTS(le16_to_cpu(de->name_len));
 		if (unlikely(bit_pos > d->max ||
 				le16_to_cpu(de->name_len) > F2FS_NAME_LEN)) {
-			f2fs_warn(sbi, "%s: corrupted namelen=%d, run fsck to fix.",
-				  __func__, le16_to_cpu(de->name_len));
+			f2fs_msg(sbi->sb, KERN_WARNING,
+				"%s: corrupted namelen=%d, run fsck to fix.",
+				__func__, le16_to_cpu(de->name_len));
 			set_sbi_flag(sbi, SBI_NEED_FSCK);
-			err = -EFSCORRUPTED;
+			err = -EINVAL;
 			goto out;
 		}
 
-		if (IS_ENCRYPTED(d->inode)) {
+		if (f2fs_encrypted_inode(d->inode)) {
 			int save_len = fstr->len;
 
 			err = fscrypt_fname_disk_to_usr(d->inode,
@@ -847,8 +851,6 @@ int f2fs_fill_dentries(struct dir_context *ctx, struct f2fs_dentry_ptr *d,
 		ctx->pos = start_pos + bit_pos;
 	}
 out:
-	if (readdir_ra)
-		blk_finish_plug(&plug);
 	return err;
 }
 
