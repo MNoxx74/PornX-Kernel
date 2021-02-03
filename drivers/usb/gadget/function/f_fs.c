@@ -1183,8 +1183,6 @@ static int ffs_aio_cancel(struct kiocb *kiocb)
 
 	spin_unlock_irqrestore(&epfile->ffs->eps_lock, flags);
 
-	ffs_log("exit: value %d", value);
-
 	return value;
 }
 
