@@ -125,6 +125,7 @@ static int cam_ope_mgr_process_cmd(void *priv, void *data)
 		mutex_unlock(&hw_mgr->hw_mgr_mutex);
 		return -EINVAL;
 	}
+
 	if (!cam_ope_is_pending_request(ctx_data)) {
 		CAM_WARN(CAM_OPE, "no pending req, req %lld last flush %lld",
 			task_data->req_id, ctx_data->last_flush_req);
@@ -706,7 +707,6 @@ static int32_t cam_ope_process_request_timer(void *priv, void *data)
 		task = cam_req_mgr_workq_get_task(ope_hw_mgr->msg_work);
 		if (!task) {
 			CAM_ERR(CAM_OPE, "no empty task");
-			mutex_unlock(&ctx_data->ctx_mutex);
 			return 0;
 		}
 		task_data = (struct ope_msg_work_data *)task->payload;
@@ -1956,14 +1956,6 @@ static int cam_ope_mgr_process_cmd_io_buf_req(struct cam_ope_hw_mgr *hw_mgr,
 				alignment = in_res->alignment;
 				unpack_format = in_res->unpacker_format;
 				pack_format = 0;
-				if (in_io_buf->pix_pattern >
-					PIXEL_PATTERN_CRYCBY) {
-					CAM_ERR(CAM_OPE,
-						 "Invalid pix pattern = %u",
-						in_io_buf->pix_pattern);
-					return -EINVAL;
-				}
-				io_buf->pix_pattern = in_io_buf->pix_pattern;
 			} else if (in_io_buf->direction == CAM_BUF_OUTPUT) {
 				out_res =
 					&ctx_data->ope_acquire.out_res[rsc_idx];

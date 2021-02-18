@@ -2786,6 +2786,7 @@ static int cam_tfe_mgr_stop_hw(void *hw_mgr_priv, void *stop_hw_args)
 	cam_tfe_mgr_pause_hw(ctx);
 
 	wait_for_completion(&ctx->config_done_complete);
+
 	if (ctx->is_tpg)
 		cam_tfe_hw_mgr_stop_hw_res(&ctx->res_list_tpg);
 
