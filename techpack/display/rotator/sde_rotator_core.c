@@ -2055,6 +2055,7 @@ static int sde_rotator_validate_fmt_and_item_flags(
 		SDEROT_ERR("ubwc format is not supported\n");
 		return -EINVAL;
 	}
+
 	return 0;
 }
 
