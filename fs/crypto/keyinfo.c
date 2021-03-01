@@ -14,7 +14,6 @@
 #include <linux/hashtable.h>
 #include <linux/scatterlist.h>
 #include <linux/ratelimit.h>
-#include <linux/siphash.h>
 #include <crypto/aes.h>
 #include <crypto/algapi.h>
 #include <crypto/sha.h>
@@ -409,7 +408,7 @@ err_free_mk:
 	return ERR_PTR(err);
 }
 
-static int fscrypt_do_sha256(const u8 *src, int srclen, u8 *dst)
+static int derive_essiv_salt(const u8 *key, int keysize, u8 *salt)
 {
 	struct crypto_shash *tfm = READ_ONCE(essiv_hash_tfm);
 
@@ -436,7 +435,7 @@ static int fscrypt_do_sha256(const u8 *src, int srclen, u8 *dst)
 		desc->tfm = tfm;
 		desc->flags = 0;
 
-		return crypto_shash_digest(desc, src, srclen, dst);
+		return crypto_shash_digest(desc, key, keysize, salt);
 	}
 }
 
@@ -453,7 +452,7 @@ static int init_essiv_generator(struct fscrypt_info *ci, const u8 *raw_key,
 
 	ci->ci_essiv_tfm = essiv_tfm;
 
-	err = fscrypt_do_sha256(raw_key, keysize, salt);
+	err = derive_essiv_salt(raw_key, keysize, salt);
 	if (err)
 		goto out;
 
@@ -516,33 +515,6 @@ static int setup_crypto_transform(struct fscrypt_info *ci,
 			return err;
 		}
 	}
-	return 0;
-}
-
-static int init_crypt_info_for_ice(struct fscrypt_info *ci,
-				   const struct inode *inode, const u8 *raw_key)
-{
-	const unsigned int raw_key_size = ci->ci_mode->keysize;
-
-	if (!fscrypt_is_ice_capable(inode->i_sb)) {
-		fscrypt_warn(inode->i_sb, "ICE support not available");
-		return -EINVAL;
-	}
-
-	if (ci->ci_flags & FS_POLICY_FLAG_IV_INO_LBLK_32) {
-		union {
-			siphash_key_t k;
-			u8 bytes[SHA256_DIGEST_SIZE];
-		} ino_hash_key;
-		int err;
-
-		/* hashed_ino = SipHash(key=SHA256(master_key), data=i_ino) */
-		err = fscrypt_do_sha256(raw_key, 32, ino_hash_key.bytes);
-		if (err)
-			return err;
-		ci->ci_hashed_ino = siphash_1u64(inode->i_ino, &ino_hash_key.k);
-	}
-	memcpy(ci->ci_raw_key, raw_key, raw_key_size);
 	return 0;
 }
 
