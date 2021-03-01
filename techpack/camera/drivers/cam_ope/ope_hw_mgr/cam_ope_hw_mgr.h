@@ -50,7 +50,7 @@
 #define OPE_CMDS                  OPE_MAX_CMD_BUFS
 #define CAM_MAX_IN_RES            8
 
-#define OPE_MAX_CDM_BLS           16
+#define OPE_MAX_CDM_BLS           24
 
 #define CAM_OPE_MAX_PER_PATH_VOTES 6
 #define CAM_OPE_BW_CONFIG_UNKNOWN  0
@@ -363,6 +363,7 @@ struct ope_io_buf {
 	uint32_t format;
 	uint32_t fence;
 	uint32_t num_planes;
+	uint32_t pix_pattern;
 	uint32_t num_stripes[OPE_MAX_PLANES];
 	struct ope_stripe_io s_io[OPE_MAX_PLANES][OPE_MAX_STRIPES];
 };
