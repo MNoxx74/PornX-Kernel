@@ -120,8 +120,8 @@ config OF_DMA_DEFAULT_COHERENT
 	bool
 
 config OF_BATTERYDATA
-￼	def_bool y
-￼	help
-￼	  OpenFirmware BatteryData accessors
+	def_bool y
+	help
+	  OpenFirmware BatteryData accessors
 
 endif # OF
