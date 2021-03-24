@@ -38,7 +38,7 @@
  * User Space Request & Response are synchronous.
  * read() & write() operations are blocking until completed or terminated.
  */
-#define pr_fmt(fmt)	KBUILD_MODNAME ": " fmt
+#define pr_fmt(fmt)	KBUILD_MODNAME ":%s: " fmt, __func__
 
 #include <linux/kernel.h>	/* min()             */
 #include <linux/module.h>	/* MODULE_LICENSE    */
@@ -476,11 +476,9 @@ static int spcom_rx(struct spcom_channel *ch,
 			spcom_pr_warn("rpmsg channel is closing\n");
 			ret = -ERESTART;
 			goto exit_err;
-		} else if (ret < 0 || timeleft == -ERESTARTSYS) {
-			spcom_pr_dbg("wait interrupted: ret=%d, timeleft=%ld\n",
-				 ret, timeleft);
-			if (timeleft == -ERESTARTSYS)
-				ret = -ERESTARTSYS;
+		} else if (ret < 0 || timeleft < 0) {
+			spcom_pr_err("rx wait was interrupted!");
+			ret = -EINTR; /* abort, not restartable */
 			goto exit_err;
 		} else if (ch->actual_rx_size) {
 			spcom_pr_dbg("actual_rx_size is [%zu], txn_id %d\n",
@@ -599,16 +597,10 @@ static int spcom_handle_create_channel_command(void *cmd_buf, int cmd_size)
 {
 	int ret = 0;
 	struct spcom_user_create_channel_command *cmd = cmd_buf;
-	const size_t maxlen = sizeof(cmd->ch_name);
 
 	if (cmd_size != sizeof(*cmd)) {
 		spcom_pr_err("cmd_size [%d] , expected [%d]\n",
 		       (int) cmd_size,  (int) sizeof(*cmd));
-		return -EINVAL;
-	}
-
-	if (strnlen(cmd->ch_name, maxlen) == maxlen) {
-		spcom_pr_err("channel name is not NULL terminated\n");
 		return -EINVAL;
 	}
 
@@ -1920,7 +1912,8 @@ static inline int handle_poll(struct file *file,
 		mutex_unlock(&ch->lock);
 		break;
 	default:
-		spcom_pr_err("ch [%s] unsupported ioctl:%u\n", op->cmd_id);
+		spcom_pr_err("ch [%s] unsupported ioctl:%u\n",
+			name, op->cmd_id);
 		ret = -EINVAL;
 	}
 	spcom_pr_dbg("name=%s, retval=%d\n", name, op->retval);
@@ -2003,6 +1996,12 @@ static int spcom_create_channel_chardev(const char *name, bool is_sharable)
 	void *priv;
 	struct cdev *cdev;
 
+	if (!name || strnlen(name, SPCOM_CHANNEL_NAME_SIZE) ==
+			SPCOM_CHANNEL_NAME_SIZE) {
+		spcom_pr_err("invalid channel name\n");
+		return -EINVAL;
+	}
+
 	spcom_pr_dbg("creating channel [%s]\n", name);
 	mutex_lock(&spcom_dev->create_channel_lock);
 
@@ -2041,7 +2040,12 @@ static int spcom_create_channel_chardev(const char *name, bool is_sharable)
 
 	devt = spcom_dev->device_no + atomic_read(&spcom_dev->chdev_count);
 	priv = ch;
-	dev = device_create(cls, parent, devt, priv, name);
+
+	/*
+	 * Pass channel name as formatted string to avoid abuse by using a
+	 * formatted string as channel name
+	 */
+	dev = device_create(cls, parent, devt, priv, "%s", name);
 	if (IS_ERR(dev)) {
 		spcom_pr_err("device_create failed\n");
 		ret = -ENODEV;

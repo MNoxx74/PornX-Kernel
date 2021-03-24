@@ -682,7 +682,7 @@ struct msm_pcie_dev_t {
 	bool disable_pc;
 	struct pci_saved_state *saved_state;
 
-	struct wakeup_source ws;
+	struct wakeup_source *ws;
 	struct msm_bus_scale_pdata *bus_scale_table;
 	uint32_t bus_client;
 
@@ -3740,7 +3740,7 @@ static int msm_pcie_get_bw_scale(struct msm_pcie_dev_t *pcie_dev)
 		of_property_read_u32_array(pdev->dev.of_node, "qcom,bw-scale",
 				(u32 *)pcie_dev->bw_scale, size / sizeof(u32));
 
-		pcie_dev->bw_gen_max = size / sizeof(u32);
+		pcie_dev->bw_gen_max = size / sizeof(*pcie_dev->bw_scale);
 	} else {
 		PCIE_DBG(pcie_dev, "RC%d: bandwidth scaling is not supported\n",
 			pcie_dev->rc_idx);
@@ -4738,12 +4738,15 @@ static void msm_pcie_notify_client(struct msm_pcie_dev_t *dev,
 	if (dev->event_reg && dev->event_reg->callback &&
 		(dev->event_reg->events & event)) {
 		struct msm_pcie_notify *notify = &dev->event_reg->notify;
+		struct msm_pcie_notify client_notify;
 
-		notify->event = event;
-		notify->user = dev->event_reg->user;
+		client_notify.event = event;
+		client_notify.user = dev->event_reg->user;
+		client_notify.data = notify->data;
+		client_notify.options = notify->options;
 		PCIE_DUMP(dev, "PCIe: callback RC%d for event %d\n",
 			dev->rc_idx, event);
-		dev->event_reg->callback(notify);
+		dev->event_reg->callback(&client_notify);
 
 		if ((dev->event_reg->options & MSM_PCIE_CONFIG_NO_RECOVERY) &&
 				(event == MSM_PCIE_EVENT_LINKDOWN)) {
@@ -4988,8 +4991,8 @@ static irqreturn_t handle_wake_irq(int irq, void *data)
 		schedule_work(&dev->handle_wake_work);
 	} else {
 		PCIE_DBG2(dev, "Wake up RC%d\n", dev->rc_idx);
-		__pm_stay_awake(&dev->ws);
-		__pm_relax(&dev->ws);
+		__pm_stay_awake(dev->ws);
+		__pm_relax(dev->ws);
 
 		if (dev->num_ep > 1) {
 			for (i = 0; i < MAX_DEVICE_NUM; i++) {
@@ -5126,10 +5129,13 @@ static int32_t msm_pcie_irq_init(struct msm_pcie_dev_t *dev)
 
 	PCIE_DBG(dev, "RC%d\n", dev->rc_idx);
 
-	if (dev->rc_idx)
-		wakeup_source_init(&dev->ws, "RC1 pcie_wakeup_source");
-	else
-		wakeup_source_init(&dev->ws, "RC0 pcie_wakeup_source");
+	dev->ws = wakeup_source_register(pdev, dev_name(pdev));
+	if (!dev->ws) {
+		PCIE_ERR(dev,
+			 "PCIe: RC%d: failed to register wakeup source\n",
+			 dev->rc_idx);
+		return -ENOMEM;
+	}
 
 	if (dev->irq[MSM_PCIE_INT_GLOBAL_INT].num) {
 		rc = devm_request_irq(pdev,
@@ -5177,7 +5183,7 @@ static void msm_pcie_irq_deinit(struct msm_pcie_dev_t *dev)
 {
 	PCIE_DBG(dev, "RC%d\n", dev->rc_idx);
 
-	wakeup_source_trash(&dev->ws);
+	wakeup_source_unregister(dev->ws);
 
 	if (dev->wake_n)
 		disable_irq(dev->wake_n);
@@ -6206,6 +6212,15 @@ int msm_pcie_set_link_bandwidth(struct pci_dev *pci_dev, u16 target_link_speed,
 
 	pcie_dev = PCIE_BUS_PRIV_DATA(root_pci_dev->bus);
 
+	if (target_link_speed > pcie_dev->bw_gen_max ||
+		(pcie_dev->target_link_speed &&
+		target_link_speed > pcie_dev->target_link_speed)) {
+		PCIE_DBG(pcie_dev,
+			"PCIe: RC%d: invalid target link speed: %d\n",
+			pcie_dev->rc_idx, target_link_speed);
+		return -EINVAL;
+	}
+
 	pcie_capability_read_word(root_pci_dev, PCI_EXP_LNKSTA, &link_status);
 
 	current_link_speed = link_status & PCI_EXP_LNKSTA_CLS;
@@ -6728,8 +6743,8 @@ static int msm_pcie_pm_suspend(struct pci_dev *dev,
 	spin_unlock_irqrestore(&pcie_dev->cfg_lock,
 				pcie_dev->irqsave_flags);
 
-	msm_pcie_write_mask(pcie_dev->elbi + PCIE20_ELBI_SYS_CTRL, 0,
-				BIT(4));
+	writel_relaxed(BIT(4), pcie_dev->elbi + PCIE20_ELBI_SYS_CTRL);
+	wmb(); /* ensure changes propagated to the hardware */
 
 	PCIE_DBG(pcie_dev, "RC%d: PME_TURNOFF_MSG is sent out\n",
 		pcie_dev->rc_idx);

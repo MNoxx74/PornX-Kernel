@@ -939,10 +939,7 @@ static int __ipa_finish_flt_rule_add(struct ipa3_flt_tbl *tbl,
 {
 	int id;
 
-	if (tbl->rule_cnt < IPA_RULE_CNT_MAX)
-		tbl->rule_cnt++;
-	else
-		return -EINVAL;
+	tbl->rule_cnt++;
 	if (entry->rt_tbl)
 		entry->rt_tbl->ref_cnt++;
 	id = ipa3_id_alloc(entry);
@@ -1696,17 +1693,23 @@ int ipa3_mdfy_flt_rule(struct ipa_ioc_mdfy_flt_rule *hdls)
 	}
 
 	mutex_lock(&ipa3_ctx->lock);
+
 	for (i = 0; i < hdls->num_rules; i++) {
 		/* if hashing not supported, all tables are non-hash tables*/
 		if (ipa3_ctx->ipa_fltrt_not_hashable)
 			hdls->rules[i].rule.hashable = false;
+
 		__ipa_convert_flt_mdfy_in(hdls->rules[i], &rule);
-		if (__ipa_mdfy_flt_rule(&rule, hdls->ip)) {
-			IPAERR_RL("failed to mdfy flt rule %i\n", i);
+
+		result = __ipa_mdfy_flt_rule(&rule, hdls->ip);
+
+		__ipa_convert_flt_mdfy_out(rule, &hdls->rules[i]);
+
+		if (result) {
+			IPAERR_RL("failed to mdfy flt rule %d\n", i);
 			hdls->rules[i].status = IPA_FLT_STATUS_OF_MDFY_FAILED;
 		} else {
 			hdls->rules[i].status = 0;
-			__ipa_convert_flt_mdfy_out(rule, &hdls->rules[i]);
 		}
 	}
 

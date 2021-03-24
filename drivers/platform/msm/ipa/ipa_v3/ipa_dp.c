@@ -2656,7 +2656,7 @@ static void ipa3_cleanup_rx(struct ipa3_sys_context *sys)
 		tail = atomic_read(&sys->repl->tail_idx);
 		while (head != tail) {
 			rx_pkt = sys->repl->cache[head];
-			if (sys->repl_hdlr != ipa3_replenish_rx_page_recycle) {
+			if (!ipa3_ctx->ipa_wan_skb_page) {
 				dma_unmap_single(ipa3_ctx->pdev,
 					rx_pkt->data.dma_addr,
 					sys->rx_buff_sz,
@@ -3259,18 +3259,14 @@ void ipa3_lan_rx_cb(void *priv, enum ipa_dp_evt_type evt, unsigned long data)
 	unsigned int src_pipe;
 	u32 metadata;
 	u8 ucp;
-	void (*client_notify)(void *client_priv, enum ipa_dp_evt_type evt,
-		       unsigned long data);
-	void *client_priv;
 
 	ipahal_pkt_status_parse_thin(rx_skb->data, &status);
 	src_pipe = status.endp_src_idx;
 	metadata = status.metadata;
 	ucp = status.ucp;
 	ep = &ipa3_ctx->ep[src_pipe];
-	if (unlikely(src_pipe >= ipa3_ctx->ipa_num_pipes) ||
-		unlikely(atomic_read(&ep->disconnect_in_progress))) {
-		IPAERR("drop pipe=%d\n", src_pipe);
+	if (unlikely(src_pipe >= ipa3_ctx->ipa_num_pipes)) {
+		IPAERR_RL("drop pipe=%d\n", src_pipe);
 		dev_kfree_skb_any(rx_skb);
 		return;
 	}
@@ -3292,19 +3288,12 @@ void ipa3_lan_rx_cb(void *priv, enum ipa_dp_evt_type evt, unsigned long data)
 			metadata, *(u32 *)rx_skb->cb);
 	IPADBG_LOW("ucp: %d\n", *(u8 *)(rx_skb->cb + 4));
 
-	spin_lock(&ipa3_ctx->disconnect_lock);
 	if (likely((!atomic_read(&ep->disconnect_in_progress)) &&
-				ep->valid && ep->client_notify)) {
-		client_notify = ep->client_notify;
-		client_priv = ep->priv;
-		spin_unlock(&ipa3_ctx->disconnect_lock);
-		client_notify(client_priv, IPA_RECEIVE,
+				ep->valid && ep->client_notify))
+		ep->client_notify(ep->priv, IPA_RECEIVE,
 				(unsigned long)(rx_skb));
-	} else {
-		spin_unlock(&ipa3_ctx->disconnect_lock);
+	else
 		dev_kfree_skb_any(rx_skb);
-	}
-
 }
 
 static void ipa3_recycle_rx_wrapper(struct ipa3_rx_pkt_wrapper *rx_pkt)
@@ -3356,25 +3345,6 @@ static struct sk_buff *handle_skb_completion(struct gsi_chan_xfer_notify
 	if (notify->bytes_xfered)
 		rx_pkt->len = notify->bytes_xfered;
 
-	/*Drop packets when WAN consumer channel receive EOB event*/
-	if ((notify->evt_id == GSI_CHAN_EVT_EOB ||
-		sys->skip_eot) &&
-		sys->ep->client == IPA_CLIENT_APPS_WAN_CONS) {
-		dma_unmap_single(ipa3_ctx->pdev, rx_pkt->data.dma_addr,
-			sys->rx_buff_sz, DMA_FROM_DEVICE);
-		sys->free_skb(rx_pkt->data.skb);
-		sys->free_rx_wrapper(rx_pkt);
-		sys->eob_drop_cnt++;
-		if (notify->evt_id == GSI_CHAN_EVT_EOB) {
-			IPADBG("EOB event on WAN consumer channel, drop\n");
-			sys->skip_eot = true;
-		} else {
-			IPADBG("Reset skip eot flag.\n");
-			sys->skip_eot = false;
-		}
-		return NULL;
-	}
-
 	rx_skb = rx_pkt->data.skb;
 	skb_set_tail_pointer(rx_skb, rx_pkt->len);
 	rx_skb->len = rx_pkt->len;
@@ -3387,6 +3357,13 @@ static struct sk_buff *handle_skb_completion(struct gsi_chan_xfer_notify
 	if (unlikely(notify->veid >= GSI_VEID_MAX)) {
 		WARN_ON(1);
 		return NULL;
+	}
+
+	/*Assesrt when WAN consumer channel receive EOB event*/
+	if (unlikely(notify->evt_id == GSI_CHAN_EVT_EOB &&
+		sys->ep->client == IPA_CLIENT_APPS_WAN_CONS)) {
+		IPAERR("EOB event received on WAN consumer channel\n");
+		ipa_assert();
 	}
 
 	head = &rx_pkt->sys->pending_pkts[notify->veid];
@@ -3746,9 +3723,7 @@ static void ipa3_set_aggr_limit(struct ipa_sys_connect_params *in,
 	sys->ep->status.status_en = false;
 	sys->rx_buff_sz = IPA_GENERIC_RX_BUFF_SZ(adjusted_sz);
 
-	if (in->client == IPA_CLIENT_APPS_WAN_COAL_CONS ||
-		(in->client == IPA_CLIENT_APPS_WAN_CONS &&
-			ipa3_ctx->ipa_hw_type <= IPA_HW_v4_2))
+	if (in->client == IPA_CLIENT_APPS_WAN_COAL_CONS)
 		in->ipa_ep_cfg.aggr.aggr_hard_byte_limit_en = 1;
 
 	*aggr_byte_limit = sys->rx_buff_sz < *aggr_byte_limit ?
@@ -3965,9 +3940,8 @@ static int ipa3_assign_policy(struct ipa_sys_connect_params *in,
 			 * Dont enable ipa_status for APQ, since MDM IPA
 			 * has IPA >= 4.5 with DPLv3.
 			 */
-			if ((ipa3_ctx->platform_type == IPA_PLAT_TYPE_APQ &&
-				ipa3_is_mhip_offload_enabled()) ||
-				(ipa3_ctx->ipa_hw_type >= IPA_HW_v4_5))
+			if (ipa3_ctx->platform_type == IPA_PLAT_TYPE_APQ &&
+				ipa3_is_mhip_offload_enabled())
 				sys->ep->status.status_en = false;
 			else
 				sys->ep->status.status_en = true;

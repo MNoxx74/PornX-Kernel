@@ -561,6 +561,14 @@ void rpmh_rsc_mode_solver_set(struct rsc_drv *drv, bool enable)
 	int m;
 	struct tcs_group *tcs = get_tcs_of_type(drv, ACTIVE_TCS);
 
+	/*
+	 * If we made an active request on a RSC that does not have a
+	 * dedicated TCS for active state use, then re-purposed wake TCSes
+	 * should be checked for not busy, because we used wake TCSes for
+	 * active requests in this case.
+	 */
+	if (!tcs->num_tcs)
+		tcs = get_tcs_of_type(drv, WAKE_TCS);
 again:
 	spin_lock(&drv->lock);
 	for (m = tcs->offset; m < tcs->offset + tcs->num_tcs; m++) {
@@ -920,3 +928,6 @@ static int __init rpmh_driver_init(void)
 	return platform_driver_register(&rpmh_driver);
 }
 arch_initcall(rpmh_driver_init);
+
+MODULE_LICENSE("GPL v2");
+MODULE_DESCRIPTION("Qualcomm RPM-Hardened (RPMH) Communication driver");

@@ -1,7 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2020, The Linux Foundation. All rights reserved.
- * Copyright (C) 2020 XiaoMi, Inc.
  */
 
 #ifndef _CRYPTO_INLINE_CRYPTO_ENGINE_REGS_H_
@@ -10,7 +9,7 @@
 #include <linux/io.h>
 
 /* Register bits for ICE version */
-#define ICE_CORE_CURRENT_MAJOR_VERSION	0x03
+#define ICE_CORE_CURRENT_MAJOR_VERSION 0x03
 
 #define ICE_CORE_STEP_REV_MASK		0xFFFF
 #define ICE_CORE_STEP_REV		0 /* bit 15-0 */
@@ -150,8 +149,8 @@
 			 ICE_KEYS_RAM_RESET_COMPLETED)
 
 #define ice_writel(ice_entry, val, reg)	\
-	writel_relaxed((val), (ice_entry)->mmio + (reg))
+	writel_relaxed((val), (ice_entry)->icemmio_base + (reg))
 #define ice_readl(ice_entry, reg)	\
-	readl_relaxed((ice_entry)->mmio + (reg))
+	readl_relaxed((ice_entry)->icemmio_base + (reg))
 
 #endif /* _CRYPTO_INLINE_CRYPTO_ENGINE_REGS_H_ */

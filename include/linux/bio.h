@@ -22,6 +22,7 @@
 #include <linux/mempool.h>
 #include <linux/ioprio.h>
 #include <linux/bug.h>
+#include <linux/bio-crypt-ctx.h>
 
 #ifdef CONFIG_BLOCK
 
@@ -73,15 +74,6 @@
 
 #define bio_sectors(bio)	bvec_iter_sectors((bio)->bi_iter)
 #define bio_end_sector(bio)	bvec_iter_end_sector((bio)->bi_iter)
-#ifdef CONFIG_PFK
-#define bio_dun(bio)		((bio)->bi_iter.bi_dun)
-#define bio_duns(bio)		(bio_sectors(bio) >> 3) /* 4KB unit */
-#define bio_end_dun(bio)	(bio_dun(bio) + bio_duns(bio))
-#else
-#define bio_dun(bio)		0
-#define bio_duns(bio)		0
-#define bio_end_dun(bio)	0
-#endif
 
 /*
  * Return the data direction, READ or WRITE.
@@ -178,11 +170,6 @@ static inline void bio_advance_iter(struct bio *bio, struct bvec_iter *iter,
 				    unsigned bytes)
 {
 	iter->bi_sector += bytes >> 9;
-
-#ifdef CONFIG_PFK
-	if (iter->bi_dun)
-		iter->bi_dun += bytes >> 12;
-#endif
 
 	if (bio_no_advance_iter(bio)) {
 		iter->bi_size -= bytes;

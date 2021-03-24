@@ -5294,8 +5294,8 @@ int ipa3_cfg_ep_holb(u32 clnt_hdl, const struct ipa_ep_cfg_holb *ep_holb)
 	ipa3_ctx->ep[clnt_hdl].holb.en = IPA_HOLB_TMR_EN;
 	ipahal_write_reg_n_fields(IPA_ENDP_INIT_HOL_BLOCK_EN_n,
 		clnt_hdl, ep_holb);
-	/* For targets > IPA_4.0 issue requires HOLB_EN to be written twice */
-	if (ipa3_ctx->ipa_hw_type >= IPA_HW_v4_0)
+	/* IPA4.5 issue requires HOLB_EN to be written twice */
+	if (ipa3_ctx->ipa_hw_type >= IPA_HW_v4_5)
 		ipahal_write_reg_n_fields(IPA_ENDP_INIT_HOL_BLOCK_EN_n,
 			clnt_hdl, ep_holb);
 
@@ -5349,12 +5349,18 @@ int ipa3_cfg_ep_deaggr(u32 clnt_hdl,
 		clnt_hdl,
 		ep_deaggr->deaggr_hdr_len);
 
+	IPADBG("syspipe_err_detection=%d\n",
+		ep_deaggr->syspipe_err_detection);
+
 	IPADBG("packet_offset_valid=%d\n",
 		ep_deaggr->packet_offset_valid);
 
 	IPADBG("packet_offset_location=%d max_packet_len=%d\n",
 		ep_deaggr->packet_offset_location,
 		ep_deaggr->max_packet_len);
+
+	IPADBG("ignore_min_pkt_err=%d\n",
+		ep_deaggr->ignore_min_pkt_err);
 
 	ep = &ipa3_ctx->ep[clnt_hdl];
 
@@ -7590,9 +7596,13 @@ static bool ipa3_gsi_channel_is_quite(struct ipa3_ep_context *ep)
 	bool empty;
 
 	gsi_is_channel_empty(ep->gsi_chan_hdl, &empty);
-	if (!empty)
+	if (!empty) {
 		IPADBG("ch %ld not empty\n", ep->gsi_chan_hdl);
-	/*Schedule NAPI only from interrupt context to avoid race conditions*/
+		/* queue a work to start polling if don't have one */
+		atomic_set(&ipa3_ctx->transport_pm.eot_activity, 1);
+		if (!atomic_read(&ep->sys->curr_polling_state))
+			__ipa_gsi_irq_rx_scedule_poll(ep->sys);
+	}
 	return empty;
 }
 
@@ -7604,6 +7614,7 @@ static int __ipa3_stop_gsi_channel(u32 clnt_hdl)
 	struct ipa3_ep_context *ep;
 	enum ipa_client_type client_type;
 	struct IpaHwOffloadStatsAllocCmdData_t *gsi_info;
+	struct ipa_ep_cfg_holb holb_cfg;
 
 	if (clnt_hdl >= ipa3_ctx->ipa_num_pipes ||
 		ipa3_ctx->ep[clnt_hdl].valid == 0) {
@@ -7658,6 +7669,24 @@ static int __ipa3_stop_gsi_channel(u32 clnt_hdl)
 		default:
 			IPADBG("client_type %d not supported\n",
 				client_type);
+		}
+	}
+
+	/* Enable HOLB on MHIP RMNET CONS before stopping
+	 * USB PROD pipe
+	 */
+	if (ipa3_is_mhip_offload_enabled() &&
+		client_type == IPA_CLIENT_USB_PROD) {
+		memset(&holb_cfg, 0, sizeof(struct ipa_ep_cfg_holb));
+		holb_cfg.en = IPA_HOLB_TMR_EN;
+		holb_cfg.tmr_val = 0;
+		IPADBG("Enabling HOLB on RMNET CONS pipe");
+		res = ipa3_cfg_ep_holb(ipa3_get_ep_mapping(
+				IPA_CLIENT_MHI_PRIME_RMNET_CONS), &holb_cfg);
+		if (res) {
+			IPAERR("Enable HOLB failed ep:%lu\n",
+				ipa3_get_ep_mapping(
+					IPA_CLIENT_MHI_PRIME_RMNET_CONS));
 		}
 	}
 

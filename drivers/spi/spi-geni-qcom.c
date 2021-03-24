@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2017-2020, The Linux Foundation. All rights reserved.
- * Copyright (C) 2020 XiaoMi, Inc.
  */
 
 
@@ -22,7 +21,7 @@
 #include <linux/pinctrl/consumer.h>
 
 #define SPI_NUM_CHIPSELECT	(4)
-#define SPI_XFER_TIMEOUT_MS	(1500)
+#define SPI_XFER_TIMEOUT_MS	(250)
 #define SPI_AUTO_SUSPEND_DELAY	(250)
 /* SPI SE specific registers */
 #define SE_SPI_CPHA		(0x224)
@@ -104,7 +103,6 @@
 #define RX_IO_POS_FF_EN_SEL_SHFT	4
 #define RX_IO_EN2CORE_EN_DELAY_SHFT	8
 #define RX_SI_EN2IO_DELAY_SHFT 12
-#define SB_PIPE_SEL_SHIFT	20
 
 struct gsi_desc_cb {
 	struct spi_master *spi;
@@ -166,8 +164,6 @@ struct spi_geni_master {
 	bool cmd_done;
 	bool set_miso_sampling;
 	u32 miso_sampling_ctrl_val;
-	int set_cs_sb_delay; /*SB PIPE Delay */
-	int set_pre_cmd_dly; /*Pre command Delay */
 };
 
 static struct spi_master *get_spi_master(struct device *dev)
@@ -809,63 +805,13 @@ static int spi_geni_unprepare_message(struct spi_master *spi_mas,
 	return 0;
 }
 
-static void spi_geni_set_sampling_rate(struct spi_geni_master *mas,
-	unsigned int major, unsigned int minor)
-{
-	u32 cpol, cpha, cfg_reg108, cfg_reg109, cfg_seq_start;
-
-	cpol = geni_read_reg(mas->base, SE_SPI_CPOL);
-	cpha = geni_read_reg(mas->base, SE_SPI_CPHA);
-	cfg_reg108 = geni_read_reg(mas->base, SE_GENI_CFG_REG108);
-	cfg_reg109 = geni_read_reg(mas->base, SE_GENI_CFG_REG109);
-	/* clear CPOL bit */
-	cfg_reg108 &= ~(1 << CPOL_CTRL_SHFT);
-
-	if (major == 1 && minor == 0) {
-		/* Write 1 to RX_SI_EN2IO_DELAY reg */
-		cfg_reg108 &= ~(0x7 << RX_SI_EN2IO_DELAY_SHFT);
-		cfg_reg108 |= (1 << RX_SI_EN2IO_DELAY_SHFT);
-		/* Write 0 to RX_IO_POS_FF_EN_SEL reg */
-		cfg_reg108 &= ~(1 << RX_IO_POS_FF_EN_SEL_SHFT);
-	} else if ((major < 2) || (major == 2 && minor < 5)) {
-		/* Write 0 to RX_IO_EN2CORE_EN_DELAY reg */
-		cfg_reg108 &= ~(0x7 << RX_IO_EN2CORE_EN_DELAY_SHFT);
-	} else {
-		/*
-		 * Write miso_sampling_ctrl_set to
-		 * RX_IO_EN2CORE_EN_DELAY reg
-		 */
-		cfg_reg108 &= ~(0x7 << RX_IO_EN2CORE_EN_DELAY_SHFT);
-		cfg_reg108 |= (mas->miso_sampling_ctrl_val <<
-				RX_IO_EN2CORE_EN_DELAY_SHFT);
-	}
-
-	geni_write_reg(cfg_reg108, mas->base, SE_GENI_CFG_REG108);
-
-	if (cpol == 0 && cpha == 0)
-		cfg_reg109 = 1;
-	else if (cpol == 1 && cpha == 0)
-		cfg_reg109 = 0;
-	geni_write_reg(cfg_reg109, mas->base,
-				SE_GENI_CFG_REG109);
-	if (!(major == 1 && minor == 0))
-		geni_write_reg(1, mas->base, SE_GENI_CFG_SEQ_START);
-	cfg_reg108 = geni_read_reg(mas->base, SE_GENI_CFG_REG108);
-	cfg_reg109 = geni_read_reg(mas->base, SE_GENI_CFG_REG109);
-	cfg_seq_start = geni_read_reg(mas->base, SE_GENI_CFG_SEQ_START);
-
-	GENI_SE_DBG(mas->ipc, false, mas->dev,
-		"%s cfg108: 0x%x cfg109: 0x%x cfg_seq_start: 0x%x\n",
-		__func__, cfg_reg108, cfg_reg109, cfg_seq_start);
-}
-
 static int spi_geni_prepare_transfer_hardware(struct spi_master *spi)
 {
 	struct spi_geni_master *mas = spi_master_get_devdata(spi);
 	int ret = 0, count = 0;
 	u32 max_speed = spi->cur_msg->spi->max_speed_hz;
 	struct se_geni_rsc *rsc = &mas->spi_rsc;
-	u32 cfg_reg108;
+	u32 cpol, cpha, cfg_reg108, cfg_reg109, cfg_seq_start;
 
 	/* Adjust the IB based on the max speed of the slave.*/
 	rsc->ib = max_speed * DEFAULT_BUS_WIDTH;
@@ -987,27 +933,56 @@ setup_ipc:
 			__func__, major, minor, step, mas->oversampling);
 		}
 
-		if (mas->set_miso_sampling)
-			spi_geni_set_sampling_rate(mas, major, minor);
+		if (!mas->set_miso_sampling)
+			goto shared_se;
 
-		/* Add the SB pipe delay */
-		if (mas->set_cs_sb_delay) {
-			cfg_reg108 =
-				geni_read_reg(mas->base, SE_GENI_CFG_REG108);
-			/* Clear the sb pipe delay register value */
-			cfg_reg108 &=
-				~(0x3 << SB_PIPE_SEL_SHIFT);
-			/* Write the value into sb pipe delay register */
-			cfg_reg108 |=
-				(mas->set_cs_sb_delay << SB_PIPE_SEL_SHIFT);
-			geni_write_reg(cfg_reg108,
-				mas->base, SE_GENI_CFG_REG108);
+		cpol = geni_read_reg(mas->base, SE_SPI_CPOL);
+		cpha = geni_read_reg(mas->base, SE_SPI_CPHA);
+		cfg_reg108 = geni_read_reg(mas->base, SE_GENI_CFG_REG108);
+		cfg_reg109 = geni_read_reg(mas->base, SE_GENI_CFG_REG109);
+		/* clear CPOL bit */
+		cfg_reg108 &= ~(1 << CPOL_CTRL_SHFT);
+
+		if (major == 1 && minor == 0) {
+			/* Write 1 to RX_SI_EN2IO_DELAY reg */
+			cfg_reg108 &= ~(0x7 << RX_SI_EN2IO_DELAY_SHFT);
+			cfg_reg108 |= (1 << RX_SI_EN2IO_DELAY_SHFT);
+			/* Write 0 to RX_IO_POS_FF_EN_SEL reg */
+			cfg_reg108 &= ~(1 << RX_IO_POS_FF_EN_SEL_SHFT);
+		} else if ((major < 2) || (major == 2 && minor < 5)) {
+			/* Write 0 to RX_IO_EN2CORE_EN_DELAY reg */
+			cfg_reg108 &= ~(0x7 << RX_IO_EN2CORE_EN_DELAY_SHFT);
+		} else {
+			/*
+			 * Write miso_sampling_ctrl_set to
+			 * RX_IO_EN2CORE_EN_DELAY reg
+			 */
+			cfg_reg108 &= ~(0x7 << RX_IO_EN2CORE_EN_DELAY_SHFT);
+			cfg_reg108 |= (mas->miso_sampling_ctrl_val <<
+					RX_IO_EN2CORE_EN_DELAY_SHFT);
 		}
 
+		geni_write_reg(cfg_reg108, mas->base, SE_GENI_CFG_REG108);
+
+		if (cpol == 0 && cpha == 0)
+			cfg_reg109 = 1;
+		else if (cpol == 1 && cpha == 0)
+			cfg_reg109 = 0;
+		geni_write_reg(cfg_reg109, mas->base,
+					SE_GENI_CFG_REG109);
+		if (!(major == 1 && minor == 0))
+			geni_write_reg(1, mas->base, SE_GENI_CFG_SEQ_START);
+		cfg_reg108 = geni_read_reg(mas->base, SE_GENI_CFG_REG108);
+		cfg_reg109 = geni_read_reg(mas->base, SE_GENI_CFG_REG109);
+		cfg_seq_start = geni_read_reg(mas->base, SE_GENI_CFG_SEQ_START);
+
+		GENI_SE_DBG(mas->ipc, false, mas->dev,
+			"%s cfg108: 0x%x cfg109: 0x%x cfg_seq_start: 0x%x\n",
+			__func__, cfg_reg108, cfg_reg109, cfg_seq_start);
+shared_se:
 		mas->shared_se =
 			(geni_read_reg(mas->base, GENI_IF_FIFO_DISABLE_RO) &
 							FIFO_IF_DISABLE);
-
 		if (mas->dis_autosuspend)
 			GENI_SE_DBG(mas->ipc, false, mas->dev,
 					"Auto Suspend is disabled\n");
@@ -1058,7 +1033,6 @@ static void setup_fifo_xfer(struct spi_transfer *xfer,
 	u32 m_param = 0;
 	u32 spi_tx_cfg = geni_read_reg(mas->base, SE_SPI_TRANS_CFG);
 	u32 trans_len = 0, fifo_size = 0;
-	u32 spi_pre_cmd_dly;
 
 	if (xfer->bits_per_word != mas->cur_word_len) {
 		spi_setup_word_len(mas, mode, xfer->bits_per_word);
@@ -1109,16 +1083,6 @@ static void setup_fifo_xfer(struct spi_transfer *xfer,
 		if (!list_is_last(&xfer->transfer_list,
 					&spi->cur_msg->transfers))
 			m_param |= FRAGMENTATION;
-	}
-
-	/* Add pre command delay */
-	if (mas->set_pre_cmd_dly) {
-		m_param |= SPI_PRE_CMD_DELAY;
-		spi_pre_cmd_dly = geni_read_reg(mas->base,
-			SE_SPI_PRE_POST_CMD_DLY);
-		spi_pre_cmd_dly += mas->set_pre_cmd_dly;
-		geni_write_reg(spi_pre_cmd_dly, mas->base,
-			SE_SPI_PRE_POST_CMD_DLY);
 	}
 
 	mas->cur_xfer = xfer;
@@ -1206,12 +1170,30 @@ static void handle_fifo_timeout(struct spi_geni_master *mas,
 				"Failed to cancel/abort m_cmd\n");
 	}
 	if (mas->cur_xfer_mode == SE_DMA) {
-		if (xfer->tx_buf)
+		if (xfer->tx_buf) {
+			reinit_completion(&mas->xfer_done);
+			writel_relaxed(1, mas->base +
+				SE_DMA_TX_FSM_RST);
+			timeout =
+			wait_for_completion_timeout(&mas->xfer_done, HZ);
+			if (!timeout)
+				dev_err(mas->dev,
+					"DMA TX RESET failed\n");
 			geni_se_tx_dma_unprep(mas->wrapper_dev,
-					xfer->tx_dma, xfer->len);
-		if (xfer->rx_buf)
+				xfer->tx_dma, xfer->len);
+		}
+		if (xfer->rx_buf) {
+			reinit_completion(&mas->xfer_done);
+			writel_relaxed(1, mas->base +
+				SE_DMA_RX_FSM_RST);
+			timeout =
+			wait_for_completion_timeout(&mas->xfer_done, HZ);
+			if (!timeout)
+				dev_err(mas->dev,
+					"DMA RX RESET failed\n");
 			geni_se_rx_dma_unprep(mas->wrapper_dev,
-					xfer->rx_dma, xfer->len);
+				xfer->rx_dma, xfer->len);
+		}
 	}
 
 }
@@ -1633,21 +1615,6 @@ static int spi_geni_probe(struct platform_device *pdev)
 			dev_info(&pdev->dev, "MISO_SAMPLING_SET: %d\n",
 				geni_mas->miso_sampling_ctrl_val);
 	}
-
-	/* On minicore based targets like bengal, increasing the cs delay
-	 * using spi_cs_clk_dly register introduces unwanted inter words delay.
-	 * So, SB_PIPE_SEL register can be used to achieve this purpose. In
-	 * such cases, set SPI_PRE_POST_CMD_DLY = n+SB_PIPE_SEL (if it was set
-	 * as n before) to delay the clock initially by the same number of
-	 * clocks as SB_PIPE_SEL.
-	 */
-	if (!of_property_read_u32(pdev->dev.of_node,
-		"qcom,set-cs-sb-delay", &geni_mas->set_cs_sb_delay)) {
-		dev_dbg(&pdev->dev, "CS Sb pipe delay set: %d",
-			geni_mas->set_cs_sb_delay);
-		geni_mas->set_pre_cmd_dly = geni_mas->set_cs_sb_delay;
-	}
-
 	geni_mas->phys_addr = res->start;
 	geni_mas->size = resource_size(res);
 	geni_mas->base = devm_ioremap(&pdev->dev, res->start,
@@ -1819,7 +1786,7 @@ static int spi_geni_suspend(struct device *dev)
 static const struct dev_pm_ops spi_geni_pm_ops = {
 	SET_RUNTIME_PM_OPS(spi_geni_runtime_suspend,
 					spi_geni_runtime_resume, NULL)
-	SET_LATE_SYSTEM_SLEEP_PM_OPS(spi_geni_suspend, spi_geni_resume)
+	SET_SYSTEM_SLEEP_PM_OPS(spi_geni_suspend, spi_geni_resume)
 };
 
 static const struct of_device_id spi_geni_dt_match[] = {

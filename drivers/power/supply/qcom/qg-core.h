@@ -1,7 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 /*
  * Copyright (c) 2018-2020 The Linux Foundation. All rights reserved.
- * Copyright (C) 2020 XiaoMi, Inc.
  */
 
 #ifndef __QG_CORE_H__
@@ -67,6 +66,7 @@ struct qg_dt {
 	bool			esr_disable;
 	bool			esr_discharge_enable;
 	bool			qg_ext_sense;
+	bool			use_cp_iin_sns;
 	bool			use_s7_ocv;
 	bool			qg_sleep_config;
 	bool			qg_fast_chg_cfg;
@@ -123,6 +123,7 @@ struct qpnp_qg {
 	struct power_supply	*usb_psy;
 	struct power_supply	*dc_psy;
 	struct power_supply	*parallel_psy;
+	struct power_supply	*cp_psy;
 	struct qg_esr_data	esr_data[QG_MAX_ESR_COUNT];
 
 	/* status variable */
@@ -191,7 +192,6 @@ struct qpnp_qg {
 	int			last_adj_ssoc;
 	int			recharge_soc;
 	int			batt_age_level;
-	int			batt_id;
 	struct alarm		alarm_timer;
 	u32			sdam_data[SDAM_MAX];
 

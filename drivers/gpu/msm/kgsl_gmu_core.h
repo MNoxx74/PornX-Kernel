@@ -21,7 +21,7 @@
 #error "CNOC levels cannot exceed GX levels"
 #endif
 
-#define MAX_GMU_CLKS 7
+#define MAX_GMU_CLKS 6
 
 /*
  * These are the different ways the GMU can boot. GMU_WARM_BOOT is waking up
@@ -138,6 +138,7 @@ struct gmu_dev_ops {
 	int (*wait_for_lowest_idle)(struct kgsl_device *device);
 	int (*wait_for_gmu_idle)(struct kgsl_device *device);
 	bool (*gx_is_on)(struct kgsl_device *device);
+	bool (*cx_is_on)(struct kgsl_device *device);
 	void (*prepare_stop)(struct kgsl_device *device);
 	int (*ifpc_store)(struct kgsl_device *device, unsigned int val);
 	unsigned int (*ifpc_show)(struct kgsl_device *device);
@@ -224,6 +225,7 @@ void gmu_core_dev_enable_lm(struct kgsl_device *device);
 void gmu_core_dev_snapshot(struct kgsl_device *device,
 		struct kgsl_snapshot *snapshot);
 bool gmu_core_dev_gx_is_on(struct kgsl_device *device);
+bool gmu_core_dev_cx_is_on(struct kgsl_device *device);
 int gmu_core_dev_ifpc_show(struct kgsl_device *device);
 int gmu_core_dev_ifpc_store(struct kgsl_device *device, unsigned int val);
 void gmu_core_dev_prepare_stop(struct kgsl_device *device);

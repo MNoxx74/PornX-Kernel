@@ -49,10 +49,8 @@ enum kgsl_event_results {
 	KGSL_EVENT_CANCELLED = 2,
 };
 
-#define KGSL_FLAG_WAKE_ON_TOUCH   BIT(0)
-#define KGSL_FLAG_SPARSE          BIT(1)
-#define KGSL_FLAG_USE_SHMEM       BIT(2)
-#define KGSL_FLAG_PROCESS_RECLAIM BIT(3)
+#define KGSL_FLAG_WAKE_ON_TOUCH BIT(0)
+#define KGSL_FLAG_SPARSE        BIT(1)
 
 /*
  * "list" of event types for ftrace symbolic magic
@@ -419,13 +417,13 @@ struct kgsl_context {
 #define pr_context(_d, _c, fmt, args...) \
 		dev_err((_d)->dev, "%s[%d]: " fmt, \
 		_context_comm((_c)), \
-		pid_nr((_c)->proc_priv->pid), ##args)
+		(_c)->proc_priv->pid, ##args)
 
 /**
  * struct kgsl_process_private -  Private structure for a KGSL process (across
  * all devices)
  * @priv: Internal flags, use KGSL_PROCESS_* values
- * @pid: Identification structure for the task owner of the process
+ * @pid: ID for the task owner of the process
  * @comm: task name of the process
  * @mem_lock: Spinlock to protect the process memory lists
  * @refcount: kref object for reference counting the process
@@ -443,7 +441,7 @@ struct kgsl_context {
  */
 struct kgsl_process_private {
 	unsigned long priv;
-	struct pid *pid;
+	pid_t pid;
 	char comm[TASK_COMM_LEN];
 	spinlock_t mem_lock;
 	struct kref refcount;
@@ -586,7 +584,7 @@ static inline void kgsl_process_sub_stats(struct kgsl_process_private *priv,
 	struct mm_struct *mm;
 
 	atomic_long_sub(size, &priv->stats[type].cur);
-	pid_struct = find_get_pid(pid_nr(priv->pid));
+	pid_struct = find_get_pid(priv->pid);
 	if (pid_struct) {
 		task = get_pid_task(pid_struct, PIDTYPE_PID);
 		if (task) {
