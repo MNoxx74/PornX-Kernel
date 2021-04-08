@@ -378,6 +378,7 @@ static void smblite_lib_update_usb_type(struct smb_charger *chg,
 					enum power_supply_type type)
 {
 	chg->real_charger_type = type;
+	smblite_update_usb_desc(chg);
 }
 
 static int smblite_lib_notifier_call(struct notifier_block *nb,
@@ -467,8 +468,10 @@ void smblite_lib_suspend_on_debug_battery(struct smb_charger *chg)
 	}
 	if (chg->suspend_input_on_debug_batt) {
 		vote(chg->usb_icl_votable, DEBUG_BOARD_VOTER, val.intval, 0);
-		if (val.intval)
+		if (val.intval) {
 			pr_info("Input suspended: Fake battery\n");
+			schgm_flashlite_config_usbin_collapse(chg, false);
+		}
 	} else {
 		vote(chg->chg_disable_votable, DEBUG_BOARD_VOTER,
 					val.intval, 0);
@@ -491,19 +494,18 @@ static int set_sdp_current(struct smb_charger *chg, int icl_ua)
 	case USBIN_500UA:
 		icl_options = USB51_MODE_BIT;
 		break;
-	/* USB900 mode is not present use ICL configuration register */
-	case USBIN_900UA:
+	default:
+		/* Use ICL configuration register for HC_MODE*/
 		icl_override = SW_OVERRIDE_HC_MODE;
 		icl_options = USBIN_MODE_CHG_BIT;
-		rc = smblite_lib_set_charge_param(chg, &chg->param.usb_icl,
-						USBIN_900UA);
-		if (rc < 0) {
-			smblite_lib_err(chg, "Couldn't set HC ICL rc=%d\n", rc);
-			return rc;
-		}
 		break;
-	default:
-		return -EINVAL;
+	}
+
+	rc = smblite_lib_set_charge_param(chg, &chg->param.usb_icl,
+						icl_ua);
+	if (rc < 0) {
+		smblite_lib_err(chg, "Couldn't set HC ICL rc=%d\n", rc);
+		return rc;
 	}
 
 	rc = smblite_lib_masked_write(chg,
@@ -663,6 +665,30 @@ static int smblite_lib_icl_irq_disable_vote_callback(struct votable *votable,
 	}
 
 	chg->irq_info[USBIN_ICL_CHANGE_IRQ].enabled = !disable;
+
+	return 0;
+}
+
+static int smblite_lib_temp_change_irq_disable_vote_callback(
+		struct votable *votable, void *data,
+		int disable, const char *client)
+{
+	struct smb_charger *chg = data;
+
+	if (!chg->irq_info[TEMP_CHANGE_IRQ].irq)
+		return 0;
+
+	if (chg->irq_info[TEMP_CHANGE_IRQ].enabled && disable) {
+		if (chg->irq_info[TEMP_CHANGE_IRQ].wake)
+			disable_irq_wake(chg->irq_info[TEMP_CHANGE_IRQ].irq);
+		disable_irq_nosync(chg->irq_info[TEMP_CHANGE_IRQ].irq);
+	} else if (!chg->irq_info[TEMP_CHANGE_IRQ].enabled && !disable) {
+		enable_irq(chg->irq_info[TEMP_CHANGE_IRQ].irq);
+		if (chg->irq_info[TEMP_CHANGE_IRQ].wake)
+			enable_irq_wake(chg->irq_info[TEMP_CHANGE_IRQ].irq);
+	}
+
+	chg->irq_info[TEMP_CHANGE_IRQ].enabled = !disable;
 
 	return 0;
 }
@@ -2274,6 +2300,8 @@ void smblite_lib_usb_plugin_locked(struct smb_charger *chg)
 	if (chg->connector_type == POWER_SUPPLY_CONNECTOR_MICRO_USB)
 		smblite_lib_micro_usb_plugin(chg, vbus_rising);
 
+	vote(chg->temp_change_irq_disable_votable, DEFAULT_VOTER,
+						!vbus_rising, 0);
 	power_supply_changed(chg->usb_psy);
 	smblite_lib_dbg(chg, PR_INTERRUPT, "IRQ: usbin-plugin %s\n",
 					vbus_rising ? "attached" : "detached");
@@ -2657,6 +2685,10 @@ irqreturn_t smblite_typec_attach_detach_irq_handler(int irq, void *data)
 	bool attached = false;
 	int rc;
 
+	/* IRQ not expected to be executed for uUSB, return */
+	if (chg->connector_type == POWER_SUPPLY_CONNECTOR_MICRO_USB)
+		return IRQ_HANDLED;
+
 	smblite_lib_dbg(chg, PR_INTERRUPT, "IRQ: %s\n", irq_data->name);
 
 	rc = smblite_lib_read(chg, TYPE_C_STATE_MACHINE_STATUS_REG, &stat);
@@ -2998,9 +3030,6 @@ static void smblite_lib_thermal_regulation_work(struct work_struct *work)
 
 	/* check if DIE_TEMP is below LB */
 	if (!(stat & DIE_TEMP_MASK)) {
-		icl_ua += THERM_REGULATION_STEP_UA;
-		vote(chg->usb_icl_votable, SW_THERM_REGULATION_VOTER,
-				true, icl_ua);
 
 		/*
 		 * Check if we need further increments:
@@ -3009,8 +3038,12 @@ static void smblite_lib_thermal_regulation_work(struct work_struct *work)
 		 * ICL then remove vote and exit work.
 		 */
 		if (!strcmp(get_effective_client(chg->usb_icl_votable),
-				SW_THERM_REGULATION_VOTER))
+				SW_THERM_REGULATION_VOTER)) {
+			icl_ua += THERM_REGULATION_STEP_UA;
+			vote(chg->usb_icl_votable, SW_THERM_REGULATION_VOTER,
+					true, icl_ua);
 			goto reschedule;
+		}
 	}
 
 exit:
@@ -3267,6 +3300,15 @@ static int smblite_lib_create_votables(struct smb_charger *chg)
 	if (IS_ERR(chg->icl_irq_disable_votable)) {
 		rc = PTR_ERR(chg->icl_irq_disable_votable);
 		chg->icl_irq_disable_votable = NULL;
+		return rc;
+	}
+
+	chg->temp_change_irq_disable_votable = create_votable(
+			"TEMP_CHANGE_IRQ_DISABLE", VOTE_SET_ANY,
+			smblite_lib_temp_change_irq_disable_vote_callback, chg);
+	if (IS_ERR(chg->temp_change_irq_disable_votable)) {
+		rc = PTR_ERR(chg->temp_change_irq_disable_votable);
+		chg->temp_change_irq_disable_votable = NULL;
 		return rc;
 	}
 

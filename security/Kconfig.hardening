@@ -41,7 +41,6 @@ choice
 
 config INIT_STACK_NONE
 	bool "no automatic initialization (weakest)"
-	default y
 	help
 	  Disable automatic stack variable initialization.
 	  This leaves the kernel vulnerable to the standard
