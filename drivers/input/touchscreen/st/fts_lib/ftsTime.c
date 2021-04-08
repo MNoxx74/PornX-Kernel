@@ -57,7 +57,6 @@
 #include <linux/firmware.h>
 #include <linux/regulator/consumer.h>
 #include <linux/of_gpio.h>
-#include <linux/timekeeping.h>
 //#include <linux/sec_sysfs.h>
 
 #include "ftsCrossCompile.h"
@@ -66,12 +65,12 @@
 
 void startStopWatch(struct StopWatch *w)
 {
-	ktime_get_ts(&w->start);
+	w->start = current_kernel_time();
 }
 
 void stopStopWatch(struct StopWatch *w)
 {
-	ktime_get_ts(&w->end);
+	w->end = current_kernel_time();
 }
 
 int elapsedMillisecond(struct StopWatch *w)
