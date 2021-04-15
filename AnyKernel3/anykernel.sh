@@ -32,14 +32,6 @@ ramdisk_compression=auto;
 # set permissions/ownership for included ramdisk files
 set_perm_recursive 0 0 750 750 $ramdisk/*;
 
-ui_print("----------------------------");
-ui_print("                            ");
-ui_print("       PornX Project        ");
-ui_print("        Compile By          ");
-ui_print("          MNoxx74           ");
-ui_print("                            ");
-ui_print("----------------------------");
-
 ## AnyKernel install
 dump_boot;
 
