@@ -4,7 +4,7 @@
 ## AnyKernel setup
 # begin properties
 properties() { '
-kernel.string=Optimus Drunk Kernel by GtrCraft
+kernel.string=PornX Kernel | For Redmi 9T/Poco M3
 do.devicecheck=1
 do.modules=0
 do.cleanup=1
@@ -14,7 +14,7 @@ device.name2=lime
 device.name3=
 device.name4=
 device.name5=
-supported.versions=
+supported.versions=11
 '; } # end properties
 
 # shell variables
@@ -32,6 +32,13 @@ ramdisk_compression=auto;
 # set permissions/ownership for included ramdisk files
 set_perm_recursive 0 0 750 750 $ramdisk/*;
 
+ui_print("----------------------------");
+ui_print("                            ");
+ui_print("       PornX Project        ");
+ui_print("        Compile By          ");
+ui_print("          MNoxx74           ");
+ui_print("                            ");
+ui_print("----------------------------");
 
 ## AnyKernel install
 dump_boot;
